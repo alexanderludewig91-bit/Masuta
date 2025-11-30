@@ -17,53 +17,145 @@ export default function DashboardLayout({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const getUser = async () => {
+    let mounted = true;
+    let redirectTimeout: NodeJS.Timeout | null = null;
+    let checkCount = 0;
+    const MAX_CHECKS = 5;
+
+    const checkAuth = async () => {
+      if (!mounted) return;
+      
       try {
-        // Versuche mehrfach, die Session zu bekommen
+        // Prüfe Session mehrfach mit verschiedenen Methoden
         let user = null;
-        for (let i = 0; i < 3; i++) {
-          const { data: { user: userData, session }, error } = await supabase.auth.getUser();
+        let session = null;
+        
+        // Methode 1: getSession
+        const { data: { session: sessionData } } = await supabase.auth.getSession();
+        if (sessionData?.user) {
+          session = sessionData;
+          user = sessionData.user;
+        }
+        
+        // Methode 2: getUser (falls getSession fehlschlägt)
+        if (!user) {
+          const { data: { user: userData } } = await supabase.auth.getUser();
           if (userData) {
             user = userData;
-            break;
-          }
-          if (error && i === 2) {
-            console.error('Error getting user after retries:', error);
-            // Nur nach mehreren Versuchen redirecten
-            setTimeout(() => {
-              router.push('/login');
-            }, 1000);
-            return;
-          }
-          // Warte kurz zwischen Versuchen
-          if (i < 2) {
-            await new Promise(resolve => setTimeout(resolve, 300));
           }
         }
         
-        setUser(user);
-        setLoading(false);
+        // Methode 3: Prüfe localStorage direkt (für Chrome/Brave)
+        if (!user && typeof window !== 'undefined') {
+          try {
+            const storageKey = 'supabase.auth.token';
+            const stored = window.localStorage.getItem(storageKey);
+            if (stored) {
+              // Versuche Session nochmal zu bekommen nach localStorage-Check
+              await new Promise(resolve => setTimeout(resolve, 100));
+              const { data: { session: retrySession } } = await supabase.auth.getSession();
+              if (retrySession?.user) {
+                user = retrySession.user;
+                session = retrySession;
+              }
+            }
+          } catch (e) {
+            // Ignoriere localStorage-Fehler
+          }
+        }
+        
+        if (mounted) {
+          if (user) {
+            setUser(user);
+            setLoading(false);
+            // Lösche Redirect-Timeout wenn User gefunden
+            if (redirectTimeout) {
+              clearTimeout(redirectTimeout);
+              redirectTimeout = null;
+            }
+          } else {
+            checkCount++;
+            setLoading(false);
+            
+            // Nur redirecten nach mehreren fehlgeschlagenen Versuchen
+            if (checkCount >= MAX_CHECKS) {
+              if (redirectTimeout) {
+                clearTimeout(redirectTimeout);
+              }
+              redirectTimeout = setTimeout(() => {
+                if (mounted) {
+                  // Finale Prüfung vor Redirect
+                  supabase.auth.getSession().then(({ data: { session: finalSession } }) => {
+                    if (mounted && !finalSession?.user) {
+                      router.push('/login');
+                    }
+                  });
+                }
+              }, 1000);
+            } else {
+              // Versuche es nochmal nach kurzer Pause
+              setTimeout(() => {
+                if (mounted) {
+                  checkAuth();
+                }
+              }, 500);
+            }
+          }
+        }
       } catch (error) {
-        console.error('Error in getUser:', error);
-        setLoading(false);
+        console.error('Error in checkAuth:', error);
+        if (mounted) {
+          setLoading(false);
+        }
       }
     };
 
-    getUser();
+    // Starte Auth-Check
+    checkAuth();
 
+    // Auth State Change Listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       console.log('Auth state changed:', event, session?.user?.id);
-      setUser(session?.user ?? null);
-      setLoading(false);
-      if (!session && pathname !== '/login' && pathname !== '/register') {
-        // Warte länger bevor Redirect - Session könnte noch gesetzt werden
-        setTimeout(() => {
-          router.push('/login');
-        }, 1500);
+      
+      if (mounted) {
+        if (session?.user) {
+          setUser(session.user);
+          setLoading(false);
+          checkCount = 0; // Reset counter wenn Session gefunden
+          
+          // Lösche Redirect-Timeout
+          if (redirectTimeout) {
+            clearTimeout(redirectTimeout);
+            redirectTimeout = null;
+          }
+        } else {
+          // Session verloren - aber warte etwas bevor Redirect
+          if (pathname !== '/login' && pathname !== '/register') {
+            if (redirectTimeout) {
+              clearTimeout(redirectTimeout);
+            }
+            redirectTimeout = setTimeout(() => {
+              if (mounted) {
+                // Finale Prüfung
+                supabase.auth.getSession().then(({ data: { session: finalSession } }) => {
+                  if (mounted && !finalSession?.user) {
+                    router.push('/login');
+                  }
+                });
+              }
+            }, 3000); // Längere Wartezeit für Chrome/Brave
+          }
+        }
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      if (redirectTimeout) {
+        clearTimeout(redirectTimeout);
+      }
+      subscription.unsubscribe();
+    };
   }, [router, pathname]);
 
   const handleLogout = async () => {

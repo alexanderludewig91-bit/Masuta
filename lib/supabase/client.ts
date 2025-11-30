@@ -52,6 +52,8 @@ export const createSupabaseClient = () => {
       storage: getStorage(),
       storageKey: 'supabase.auth.token',
       flowType: 'pkce', // PKCE Flow für bessere Sicherheit und Kompatibilität
+      // Cookie-Einstellungen für bessere Browser-Kompatibilität
+      storageAccessible: true,
     },
     global: {
       headers: {
