@@ -1,0 +1,12 @@
+{
+  "name": "Masuta - Japanisch Lernen",
+  "short_name": "Masuta",
+  "description": "Lerne Japanisch mit intelligentem Vokabeltraining",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait-primary",
+  "icons": []
+}
+
